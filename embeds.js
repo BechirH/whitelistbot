@@ -99,7 +99,7 @@ function createSuccessEmbed(steamId, userTag) {
     .addFields(
       { name: "Steam ID 64", value: steamId, inline: true },
       { name: "User", value: userTag, inline: true },
-      { name: "Status", value: "Protected from rejoin bypass", inline: true }
+      { name: "Status", value: "Whitelisted & Protected", inline: true }
     )
     .setColor("#00ff00")
     .setTimestamp();
@@ -119,6 +119,43 @@ function createErrorEmbed(
     .setColor("#ff0000");
 }
 
+/**
+ * Create embed for admin command success
+ * @param {string} action - Action performed (Whitelist/Reject)
+ * @param {string} userTag - User's Discord tag
+ * @param {string} steamId - Steam ID (N/A for reject)
+ * @returns {EmbedBuilder}
+ */
+function createAdminSuccessEmbed(action, userTag, steamId) {
+  const embed = new EmbedBuilder()
+    .setTitle(`✅ Manual ${action} Successful`)
+    .setDescription(`User **${userTag}** has been ${action.toLowerCase()}ed.`)
+    .addFields(
+      { name: "User", value: userTag, inline: true },
+      { name: "Action", value: action, inline: true }
+    )
+    .setColor("#00ff00")
+    .setTimestamp();
+
+  if (steamId !== "N/A") {
+    embed.addFields({ name: "Steam ID", value: steamId, inline: true });
+  }
+
+  return embed;
+}
+
+/**
+ * Create embed for admin command errors
+ * @param {string} message - Error message
+ * @returns {EmbedBuilder}
+ */
+function createAdminErrorEmbed(message) {
+  return new EmbedBuilder()
+    .setTitle("❌ Admin Command Error")
+    .setDescription(message)
+    .setColor("#ff0000");
+}
+
 module.exports = {
   createWelcomeEmbed,
   createAlreadyWhitelistedEmbed,
@@ -128,4 +165,6 @@ module.exports = {
   createDuplicateSteamIdEmbed,
   createSuccessEmbed,
   createErrorEmbed,
+  createAdminSuccessEmbed,
+  createAdminErrorEmbed,
 };

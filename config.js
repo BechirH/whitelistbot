@@ -11,6 +11,7 @@ const CONFIG = {
   // Role IDs
   WHITELISTED_ROLE_ID: process.env.WHITELISTED_ROLE_ID,
   REJECTED_ROLE_ID: process.env.REJECTED_ROLE_ID,
+  ADMIN_ROLE_ID: process.env.ADMIN_ROLE_ID, // Optional: specific admin role for commands
 
   // Database settings
   DB_FILE: process.env.DB_FILE || "whitelist_db.json",

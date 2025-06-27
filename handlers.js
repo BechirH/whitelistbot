@@ -17,8 +17,12 @@ const {
 const {
   isSteamIdWhitelisted,
   isUserWhitelisted,
+  isUserInWhitelistedList,
+  isUserInRejectedList,
   addToWhitelist,
+  addToRejected,
   getUserSteamId,
+  initializeDatabaseFromServer,
 } = require("./database");
 const {
   createWelcomeEmbed,
@@ -29,6 +33,8 @@ const {
   createDuplicateSteamIdEmbed,
   createSuccessEmbed,
   createErrorEmbed,
+  createAdminSuccessEmbed,
+  createAdminErrorEmbed,
 } = require("./embeds");
 
 /**
@@ -60,6 +66,12 @@ async function handleReady(client) {
   console.log(`🤖 Bot is ready! Logged in as ${client.user.tag}`);
 
   try {
+    // Initialize database from server roles
+    const guild = client.guilds.cache.first();
+    if (guild) {
+      await initializeDatabaseFromServer(guild);
+    }
+
     const welcomeChannel = await client.channels.fetch(
       CONFIG.WELCOME_CHANNEL_ID
     );
@@ -76,7 +88,7 @@ async function handleReady(client) {
       );
     }
   } catch (error) {
-    console.error("❌ Error sending welcome message:", error);
+    console.error("❌ Error in ready handler:", error);
   }
 }
 
@@ -90,7 +102,7 @@ async function handleWhitelistButton(interaction) {
     const userId = interaction.user.id;
     const roleStatus = getUserRoleStatus(member);
 
-    // Check user's role status
+    // Check user's role status first
     switch (roleStatus) {
       case "whitelisted":
         return await interaction.reply({
@@ -103,6 +115,21 @@ async function handleWhitelistButton(interaction) {
           embeds: [createRejectedEmbed()],
           ephemeral: true,
         });
+    }
+
+    // Check database for existing status
+    if (isUserInWhitelistedList(userId)) {
+      return await interaction.reply({
+        embeds: [createAlreadyWhitelistedEmbed()],
+        ephemeral: true,
+      });
+    }
+
+    if (isUserInRejectedList(userId)) {
+      return await interaction.reply({
+        embeds: [createRejectedEmbed()],
+        ephemeral: true,
+      });
     }
 
     // Check if user already applied (bypass protection)
@@ -152,6 +179,7 @@ async function handleSteamIdModal(interaction, client) {
       .getTextInputValue("steamid_input")
       .trim();
     const userId = interaction.user.id;
+    const member = interaction.member;
 
     // Validate Steam ID 64
     if (!isValidSteamID64(steamid)) {
@@ -172,6 +200,24 @@ async function handleSteamIdModal(interaction, client) {
     // Add to whitelist database
     addToWhitelist(userId, steamid);
 
+    // Assign whitelisted role
+    try {
+      await member.roles.add(CONFIG.WHITELISTED_ROLE_ID);
+      console.log(`✅ Assigned whitelisted role to ${interaction.user.tag}`);
+    } catch (roleError) {
+      console.error("❌ Error assigning whitelisted role:", roleError);
+    }
+
+    // Remove rejected role if present
+    try {
+      if (member.roles.cache.has(CONFIG.REJECTED_ROLE_ID)) {
+        await member.roles.remove(CONFIG.REJECTED_ROLE_ID);
+        console.log(`✅ Removed rejected role from ${interaction.user.tag}`);
+      }
+    } catch (roleError) {
+      console.error("❌ Error removing rejected role:", roleError);
+    }
+
     // Send confirmation to user
     await interaction.reply({
       embeds: [createSuccessEmbed(steamid, interaction.user.tag)],
@@ -189,6 +235,148 @@ async function handleSteamIdModal(interaction, client) {
     await interaction.reply({
       embeds: [createErrorEmbed()],
       ephemeral: true,
+    });
+  }
+}
+
+/**
+ * Handle manual whitelist command
+ * @param {Message} message - Discord message
+ * @param {Array} args - Command arguments [discordId, steamId]
+ */
+async function handleManualWhitelist(message, args) {
+  try {
+    if (args.length !== 2) {
+      return await message.reply({
+        embeds: [
+          createAdminErrorEmbed("Usage: !whitelist <discord_id> <steam_id>"),
+        ],
+      });
+    }
+
+    const [discordId, steamId] = args;
+
+    // Validate Steam ID
+    if (!isValidSteamID64(steamId)) {
+      return await message.reply({
+        embeds: [
+          createAdminErrorEmbed("Invalid Steam ID format. Must be 17 digits."),
+        ],
+      });
+    }
+
+    // Check if Steam ID is already used by another user
+    if (isSteamIdWhitelisted(steamId)) {
+      const existingUser = Object.keys(
+        require("./database").whitelistDB.users
+      ).find((uid) => require("./database").whitelistDB.users[uid] === steamId);
+      if (existingUser && existingUser !== discordId) {
+        return await message.reply({
+          embeds: [
+            createAdminErrorEmbed("Steam ID is already used by another user."),
+          ],
+        });
+      }
+    }
+
+    // Get guild member
+    const member = await message.guild.members
+      .fetch(discordId)
+      .catch(() => null);
+    if (!member) {
+      return await message.reply({
+        embeds: [createAdminErrorEmbed("User not found in server.")],
+      });
+    }
+
+    // Add to whitelist database
+    addToWhitelist(discordId, steamId);
+
+    // Assign whitelisted role and remove rejected role
+    try {
+      await member.roles.add(CONFIG.WHITELISTED_ROLE_ID);
+      if (member.roles.cache.has(CONFIG.REJECTED_ROLE_ID)) {
+        await member.roles.remove(CONFIG.REJECTED_ROLE_ID);
+      }
+    } catch (roleError) {
+      console.error("❌ Error managing roles:", roleError);
+    }
+
+    // Send whitelist commands to configured channels
+    await sendWhitelistCommands(message.client, steamId);
+
+    await message.reply({
+      embeds: [createAdminSuccessEmbed("Whitelist", member.user.tag, steamId)],
+    });
+
+    console.log(
+      `🛠️ Manual whitelist: ${member.user.tag} (${discordId}) - Steam ID: ${steamId} by ${message.author.tag}`
+    );
+  } catch (error) {
+    console.error("❌ Error handling manual whitelist:", error);
+    await message.reply({
+      embeds: [
+        createAdminErrorEmbed(
+          "An error occurred while processing the whitelist."
+        ),
+      ],
+    });
+  }
+}
+
+/**
+ * Handle manual reject command
+ * @param {Message} message - Discord message
+ * @param {Array} args - Command arguments [discordId]
+ */
+async function handleManualReject(message, args) {
+  try {
+    if (args.length !== 1) {
+      return await message.reply({
+        embeds: [createAdminErrorEmbed("Usage: !reject <discord_id>")],
+      });
+    }
+
+    const [discordId] = args;
+
+    // Get guild member
+    const member = await message.guild.members
+      .fetch(discordId)
+      .catch(() => null);
+    if (!member) {
+      return await message.reply({
+        embeds: [createAdminErrorEmbed("User not found in server.")],
+      });
+    }
+
+    // Add to rejected database
+    addToRejected(discordId);
+
+    // Assign rejected role and remove whitelisted role
+    try {
+      await member.roles.add(CONFIG.REJECTED_ROLE_ID);
+      if (member.roles.cache.has(CONFIG.WHITELISTED_ROLE_ID)) {
+        await member.roles.remove(CONFIG.WHITELISTED_ROLE_ID);
+      }
+    } catch (roleError) {
+      console.error("❌ Error managing roles:", roleError);
+    }
+
+    await message.reply({
+      embeds: [createAdminSuccessEmbed("Reject", member.user.tag, "N/A")],
+    });
+
+    console.log(
+      `🛠️ Manual reject: ${member.user.tag} (${discordId}) by ${message.author.tag}`
+    );
+  } catch (error) {
+    console.error("❌ Error handling manual reject:", error);
+    await message.reply({
+      embeds: [
+        createAdminErrorEmbed(
+          "An error occurred while processing the rejection."
+        ),
+      ],
     });
   }
 }
@@ -222,5 +410,7 @@ async function handleInteraction(interaction, client) {
 module.exports = {
   handleReady,
   handleInteraction,
+  handleManualWhitelist,
+  handleManualReject,
   sendWelcomeMessage,
 };
