@@ -122,8 +122,18 @@ async function handleWhitelistButton(interaction) {
         });
     }
 
-    // Check database for existing status
+    // Check database for existing status and handle role assignment for rejoined users
     if (isUserInWhitelistedList(userId)) {
+      // User is in whitelist database but doesn't have role - they rejoined
+      try {
+        await member.roles.add(CONFIG.WHITELISTED_ROLE_ID);
+        console.log(
+          `✅ Re-assigned whitelisted role to ${interaction.user.tag} (rejoined user)`
+        );
+      } catch (roleError) {
+        console.error("❌ Error re-assigning whitelisted role:", roleError);
+      }
+
       return await interaction.reply({
         embeds: [createAlreadyWhitelistedEmbed()],
         ephemeral: true,
@@ -131,6 +141,16 @@ async function handleWhitelistButton(interaction) {
     }
 
     if (isUserInRejectedList(userId)) {
+      // User is in rejected database but doesn't have role - they rejoined
+      try {
+        await member.roles.add(CONFIG.REJECTED_ROLE_ID);
+        console.log(
+          `✅ Re-assigned rejected role to ${interaction.user.tag} (rejoined user)`
+        );
+      } catch (roleError) {
+        console.error("❌ Error re-assigning rejected role:", roleError);
+      }
+
       return await interaction.reply({
         embeds: [createRejectedEmbed()],
         ephemeral: true,
@@ -140,13 +160,24 @@ async function handleWhitelistButton(interaction) {
     // Check if user already applied (bypass protection)
     if (isUserWhitelisted(userId)) {
       const existingSteamId = getUserSteamId(userId);
+
+      // User has Steam ID but no whitelisted role - they rejoined, assign role
+      try {
+        await member.roles.add(CONFIG.WHITELISTED_ROLE_ID);
+        console.log(
+          `✅ Re-assigned whitelisted role to ${interaction.user.tag} (rejoined user with Steam ID)`
+        );
+      } catch (roleError) {
+        console.error("❌ Error re-assigning whitelisted role:", roleError);
+      }
+
       return await interaction.reply({
         embeds: [createAlreadyAppliedEmbed(existingSteamId)],
         ephemeral: true,
       });
     }
 
-    // Show Steam ID input modal
+    // Show Steam ID input modal for new users
     const modal = new ModalBuilder()
       .setCustomId("steamid_modal")
       .setTitle("Steam ID Verification");
