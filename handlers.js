@@ -66,8 +66,12 @@ async function handleReady(client) {
   console.log(`🤖 Bot is ready! Logged in as ${client.user.tag}`);
 
   try {
-    // Initialize database from server roles
+    // Register slash commands
+    const { registerCommands } = require("./commands");
     const guild = client.guilds.cache.first();
+    await registerCommands(client.user.id, guild?.id);
+
+    // Initialize database from server roles
     if (guild) {
       await initializeDatabaseFromServer(guild);
     }
@@ -240,144 +244,436 @@ async function handleSteamIdModal(interaction, client) {
 }
 
 /**
- * Handle manual whitelist command
- * @param {Message} message - Discord message
- * @param {Array} args - Command arguments [discordId, steamId]
+ * Clean up existing whitelist data for user/steam ID
+ * @param {string} discordId - Discord user ID
+ * @param {string} steamId - Steam ID
  */
-async function handleManualWhitelist(message, args) {
-  try {
-    if (args.length !== 2) {
-      return await message.reply({
-        embeds: [
-          createAdminErrorEmbed("Usage: !whitelist <discord_id> <steam_id>"),
-        ],
-      });
+async function cleanupExistingWhitelistData(discordId, steamId) {
+  const db = require("./database");
+  const whitelistDB = db.whitelistDB || {};
+
+  if (!whitelistDB.users) whitelistDB.users = {};
+  if (!whitelistDB.steamids) whitelistDB.steamids = [];
+  if (!whitelistDB.whitelistedUsers) whitelistDB.whitelistedUsers = [];
+
+  // Remove any existing user with this Steam ID
+  const existingUserWithSteamId = Object.keys(whitelistDB.users).find(
+    (uid) => whitelistDB.users[uid] === steamId
+  );
+
+  if (existingUserWithSteamId && existingUserWithSteamId !== discordId) {
+    delete whitelistDB.users[existingUserWithSteamId];
+
+    // Remove from whitelisted users list
+    const whitelistIndex = whitelistDB.whitelistedUsers.indexOf(
+      existingUserWithSteamId
+    );
+    if (whitelistIndex > -1) {
+      whitelistDB.whitelistedUsers.splice(whitelistIndex, 1);
     }
+  }
 
-    const [discordId, steamId] = args;
+  // Remove any existing Steam ID for this user
+  const existingSteamId = whitelistDB.users[discordId];
+  if (existingSteamId && existingSteamId !== steamId) {
+    // Check if any other user has this Steam ID
+    const otherUserWithSteamId = Object.keys(whitelistDB.users).find(
+      (uid) => uid !== discordId && whitelistDB.users[uid] === existingSteamId
+    );
 
-    // Validate Steam ID
-    if (!isValidSteamID64(steamId)) {
-      return await message.reply({
-        embeds: [
-          createAdminErrorEmbed("Invalid Steam ID format. Must be 17 digits."),
-        ],
-      });
-    }
-
-    // Check if Steam ID is already used by another user
-    if (isSteamIdWhitelisted(steamId)) {
-      const existingUser = Object.keys(
-        require("./database").whitelistDB.users
-      ).find((uid) => require("./database").whitelistDB.users[uid] === steamId);
-      if (existingUser && existingUser !== discordId) {
-        return await message.reply({
-          embeds: [
-            createAdminErrorEmbed("Steam ID is already used by another user."),
-          ],
-        });
+    // If no other user has this Steam ID, remove it from steamids array
+    if (!otherUserWithSteamId) {
+      const steamIdIndex = whitelistDB.steamids.indexOf(existingSteamId);
+      if (steamIdIndex > -1) {
+        whitelistDB.steamids.splice(steamIdIndex, 1);
       }
     }
+  }
 
-    // Get guild member
-    const member = await message.guild.members
-      .fetch(discordId)
-      .catch(() => null);
-    if (!member) {
-      return await message.reply({
-        embeds: [createAdminErrorEmbed("User not found in server.")],
-      });
-    }
+  // Save changes
+  db.saveDatabase();
+}
+
+/**
+ * Process whitelist operation - Optimized for large servers
+ * @param {Interaction} interaction - Discord interaction
+ * @param {string} discordId - Discord user ID
+ * @param {string} steamId - Steam ID
+ */
+async function processWhitelist(interaction, discordId, steamId) {
+  try {
+    // Remove any existing entries for this user or steam ID
+    await cleanupExistingWhitelistData(discordId, steamId);
 
     // Add to whitelist database
     addToWhitelist(discordId, steamId);
 
-    // Assign whitelisted role and remove rejected role
+    // Try to manage roles - but don't fail if user isn't in server
     try {
-      await member.roles.add(CONFIG.WHITELISTED_ROLE_ID);
-      if (member.roles.cache.has(CONFIG.REJECTED_ROLE_ID)) {
-        await member.roles.remove(CONFIG.REJECTED_ROLE_ID);
+      const guild = interaction.guild;
+      const member = guild.members.cache.get(discordId);
+
+      if (member) {
+        // User is in cache, manage roles
+        await member.roles.add(CONFIG.WHITELISTED_ROLE_ID);
+        if (member.roles.cache.has(CONFIG.REJECTED_ROLE_ID)) {
+          await member.roles.remove(CONFIG.REJECTED_ROLE_ID);
+        }
+        console.log(`✅ Managed roles for ${member.user.tag}`);
+      } else {
+        // User not in cache - they might not be in server or not cached
+        console.log(
+          `⚠️ User ${discordId} not found in member cache - roles will be applied when they rejoin`
+        );
       }
     } catch (roleError) {
       console.error("❌ Error managing roles:", roleError);
     }
 
     // Send whitelist commands to configured channels
-    await sendWhitelistCommands(message.client, steamId);
+    await sendWhitelistCommands(interaction.client, steamId);
 
-    await message.reply({
-      embeds: [createAdminSuccessEmbed("Whitelist", member.user.tag, steamId)],
-    });
+    const successEmbed = createAdminSuccessEmbed(
+      "Whitelist",
+      `<@${discordId}>`,
+      steamId
+    );
+
+    if (interaction.replied || interaction.deferred) {
+      await interaction.editReply({
+        embeds: [successEmbed],
+        components: [],
+      });
+    } else {
+      await interaction.reply({
+        embeds: [successEmbed],
+        ephemeral: true,
+      });
+    }
 
     console.log(
-      `🛠️ Manual whitelist: ${member.user.tag} (${discordId}) - Steam ID: ${steamId} by ${message.author.tag}`
+      `🛠️ Slash whitelist: User ${discordId} - Steam ID: ${steamId} by ${interaction.user.tag}`
     );
   } catch (error) {
-    console.error("❌ Error handling manual whitelist:", error);
-    await message.reply({
+    console.error("❌ Error processing whitelist:", error);
+    const errorResponse = {
       embeds: [
         createAdminErrorEmbed(
           "An error occurred while processing the whitelist."
         ),
       ],
-    });
+      components: [],
+    };
+
+    if (interaction.replied || interaction.deferred) {
+      await interaction.editReply(errorResponse);
+    } else {
+      await interaction.reply({ ...errorResponse, ephemeral: true });
+    }
   }
 }
 
 /**
- * Handle manual reject command
- * @param {Message} message - Discord message
- * @param {Array} args - Command arguments [discordId]
+ * Process rejection operation - Optimized for large servers
+ * @param {Interaction} interaction - Discord interaction
+ * @param {string} discordId - Discord user ID
+ * @param {string} steamId - Steam ID (can be null)
  */
-async function handleManualReject(message, args) {
+async function processRejection(interaction, discordId, steamId) {
   try {
-    if (args.length !== 1) {
-      return await message.reply({
-        embeds: [createAdminErrorEmbed("Usage: !reject <discord_id>")],
-      });
-    }
-
-    const [discordId] = args;
-
-    // Get guild member
-    const member = await message.guild.members
-      .fetch(discordId)
-      .catch(() => null);
-    if (!member) {
-      return await message.reply({
-        embeds: [createAdminErrorEmbed("User not found in server.")],
-      });
-    }
-
-    // Add to rejected database
+    // Add to rejected database (this also cleans up whitelist data)
     addToRejected(discordId);
 
-    // Assign rejected role and remove whitelisted role
+    // Try to manage roles - but don't fail if user isn't in server
     try {
-      await member.roles.add(CONFIG.REJECTED_ROLE_ID);
-      if (member.roles.cache.has(CONFIG.WHITELISTED_ROLE_ID)) {
-        await member.roles.remove(CONFIG.WHITELISTED_ROLE_ID);
+      const guild = interaction.guild;
+      const member = guild.members.cache.get(discordId);
+
+      if (member) {
+        // User is in cache, manage roles
+        await member.roles.add(CONFIG.REJECTED_ROLE_ID);
+        if (member.roles.cache.has(CONFIG.WHITELISTED_ROLE_ID)) {
+          await member.roles.remove(CONFIG.WHITELISTED_ROLE_ID);
+        }
+        console.log(`✅ Managed roles for ${member.user.tag}`);
+      } else {
+        // User not in cache - they might not be in server or not cached
+        console.log(
+          `⚠️ User ${discordId} not found in member cache - roles will be applied when they rejoin`
+        );
       }
     } catch (roleError) {
       console.error("❌ Error managing roles:", roleError);
     }
 
-    await message.reply({
-      embeds: [createAdminSuccessEmbed("Reject", member.user.tag, "N/A")],
+    const successEmbed = createAdminSuccessEmbed(
+      "Reject",
+      `<@${discordId}>`,
+      steamId || "N/A"
+    );
+
+    await interaction.reply({
+      embeds: [successEmbed],
+      ephemeral: true,
     });
 
     console.log(
-      `🛠️ Manual reject: ${member.user.tag} (${discordId}) by ${message.author.tag}`
+      `🛠️ Slash reject: User ${discordId} - Steam ID: ${steamId || "N/A"} by ${
+        interaction.user.tag
+      }`
     );
   } catch (error) {
-    console.error("❌ Error handling manual reject:", error);
-    await message.reply({
+    console.error("❌ Error processing rejection:", error);
+    await interaction.reply({
       embeds: [
         createAdminErrorEmbed(
           "An error occurred while processing the rejection."
         ),
       ],
+      ephemeral: true,
     });
+  }
+}
+
+/**
+ * Handle slash command for manual whitelist with duplicate checking
+ * @param {ChatInputCommandInteraction} interaction - Discord slash command interaction
+ */
+async function handleSlashWhitelist(interaction) {
+  try {
+    const discordId = interaction.options.getString("discord_id");
+    const steamId = interaction.options.getString("steam_id");
+
+    // Validate Steam ID
+    if (!isValidSteamID64(steamId)) {
+      return await interaction.reply({
+        embeds: [
+          createAdminErrorEmbed("Invalid Steam ID format. Must be 17 digits."),
+        ],
+        ephemeral: true,
+      });
+    }
+
+    // Check for duplicates
+    const db = require("./database");
+    const whitelistDB = db.whitelistDB || {};
+
+    const existingUserWithSteamId = Object.keys(whitelistDB.users || {}).find(
+      (uid) => whitelistDB.users[uid] === steamId
+    );
+
+    const existingSteamIdForUser = getUserSteamId(discordId);
+
+    let duplicateMessage = "";
+    let hasDuplicates = false;
+
+    if (existingUserWithSteamId && existingUserWithSteamId !== discordId) {
+      duplicateMessage += `⚠️ Steam ID ${steamId} is already whitelisted with user <@${existingUserWithSteamId}>\n`;
+      hasDuplicates = true;
+    }
+
+    if (existingSteamIdForUser && existingSteamIdForUser !== steamId) {
+      duplicateMessage += `⚠️ User <@${discordId}> is already whitelisted with Steam ID ${existingSteamIdForUser}\n`;
+      hasDuplicates = true;
+    }
+
+    if (hasDuplicates) {
+      // Create confirmation buttons
+      const confirmButton = new ButtonBuilder()
+        .setCustomId(`confirm_whitelist_${discordId}_${steamId}`)
+        .setLabel("Overwrite")
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji("⚠️");
+
+      const cancelButton = new ButtonBuilder()
+        .setCustomId("cancel_whitelist")
+        .setLabel("Cancel")
+        .setStyle(ButtonStyle.Secondary);
+
+      const row = new ActionRowBuilder().addComponents(
+        confirmButton,
+        cancelButton
+      );
+
+      const duplicateEmbed = createAdminErrorEmbed(
+        `${duplicateMessage}\nDo you want to overwrite the existing data?`
+      ).setTitle("⚠️ Duplicate Found");
+
+      return await interaction.reply({
+        embeds: [duplicateEmbed],
+        components: [row],
+        ephemeral: true,
+      });
+    }
+
+    // No duplicates, proceed with whitelisting
+    await processWhitelist(interaction, discordId, steamId);
+  } catch (error) {
+    console.error("❌ Error handling slash whitelist:", error);
+    await interaction.reply({
+      embeds: [
+        createAdminErrorEmbed(
+          "An error occurred while processing the whitelist."
+        ),
+      ],
+      ephemeral: true,
+    });
+  }
+}
+
+/**
+ * Handle slash command for manual reject
+ * @param {ChatInputCommandInteraction} interaction - Discord slash command interaction
+ */
+async function handleSlashReject(interaction) {
+  try {
+    const discordId = interaction.options.getString("discord_id");
+    const steamId = interaction.options.getString("steam_id");
+
+    // Validate that at least one parameter is provided
+    if (!discordId && !steamId) {
+      return await interaction.reply({
+        embeds: [
+          createAdminErrorEmbed(
+            "You must provide either Discord ID or Steam ID (or both)."
+          ),
+        ],
+        ephemeral: true,
+      });
+    }
+
+    // Validate Steam ID if provided
+    if (steamId && !isValidSteamID64(steamId)) {
+      return await interaction.reply({
+        embeds: [
+          createAdminErrorEmbed("Invalid Steam ID format. Must be 17 digits."),
+        ],
+        ephemeral: true,
+      });
+    }
+
+    let targetDiscordId = discordId;
+    let targetSteamId = steamId;
+
+    // If only Steam ID provided, find the Discord ID
+    if (!discordId && steamId) {
+      const db = require("./database");
+      const whitelistDB = db.whitelistDB || {};
+
+      targetDiscordId = Object.keys(whitelistDB.users || {}).find(
+        (uid) => whitelistDB.users[uid] === steamId
+      );
+
+      if (!targetDiscordId) {
+        return await interaction.reply({
+          embeds: [createAdminErrorEmbed("No user found with that Steam ID.")],
+          ephemeral: true,
+        });
+      }
+    }
+
+    // If only Discord ID provided, get the Steam ID
+    if (discordId && !steamId) {
+      targetSteamId = getUserSteamId(discordId);
+    }
+
+    // Check if user is already rejected
+    if (isUserInRejectedList(targetDiscordId)) {
+      return await interaction.reply({
+        embeds: [createAdminErrorEmbed("User is already rejected.")],
+        ephemeral: true,
+      });
+    }
+
+    // Process rejection
+    await processRejection(interaction, targetDiscordId, targetSteamId);
+  } catch (error) {
+    console.error("❌ Error handling slash reject:", error);
+    await interaction.reply({
+      embeds: [
+        createAdminErrorEmbed(
+          "An error occurred while processing the rejection."
+        ),
+      ],
+      ephemeral: true,
+    });
+  }
+}
+
+/**
+ * Handle confirmation buttons for overwrite operations
+ * @param {ButtonInteraction} interaction - Discord button interaction
+ */
+async function handleConfirmationButtons(interaction) {
+  try {
+    if (interaction.customId.startsWith("confirm_whitelist_")) {
+      const [, , discordId, steamId] = interaction.customId.split("_");
+      await processWhitelist(interaction, discordId, steamId);
+    } else if (interaction.customId === "cancel_whitelist") {
+      await interaction.update({
+        embeds: [createAdminErrorEmbed("Operation cancelled.")],
+        components: [],
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error handling confirmation buttons:", error);
+    await interaction.update({
+      embeds: [createAdminErrorEmbed("An error occurred.")],
+      components: [],
+    });
+  }
+}
+
+/**
+ * Handle all slash command interactions
+ * @param {ChatInputCommandInteraction} interaction - Discord slash command interaction
+ */
+async function handleSlashCommands(interaction) {
+  // Check permissions
+  const hasAdminPerms = interaction.memberPermissions?.has("Administrator");
+  const hasAdminRole = CONFIG.ADMIN_ROLE_ID
+    ? interaction.member.roles.cache.has(CONFIG.ADMIN_ROLE_ID)
+    : false;
+
+  if (!hasAdminPerms && !hasAdminRole) {
+    return await interaction.reply({
+      embeds: [
+        createAdminErrorEmbed("You don't have permission to use this command."),
+      ],
+      ephemeral: true,
+    });
+  }
+
+  try {
+    switch (interaction.commandName) {
+      case "whitelist":
+        await handleSlashWhitelist(interaction);
+        break;
+      case "reject":
+        await handleSlashReject(interaction);
+        break;
+      default:
+        await interaction.reply({
+          embeds: [createAdminErrorEmbed("Unknown command.")],
+          ephemeral: true,
+        });
+    }
+  } catch (error) {
+    console.error("❌ Error handling slash command:", error);
+    const errorResponse = {
+      embeds: [
+        createAdminErrorEmbed(
+          "An error occurred while processing the command."
+        ),
+      ],
+      ephemeral: true,
+    };
+
+    if (interaction.replied || interaction.deferred) {
+      await interaction.editReply(errorResponse);
+    } else {
+      await interaction.reply(errorResponse);
+    }
   }
 }
 
@@ -388,8 +684,17 @@ async function handleManualReject(message, args) {
  */
 async function handleInteraction(interaction, client) {
   try {
-    if (interaction.isButton() && interaction.customId === "whitelist_apply") {
-      await handleWhitelistButton(interaction);
+    if (interaction.isChatInputCommand()) {
+      await handleSlashCommands(interaction);
+    } else if (interaction.isButton()) {
+      if (interaction.customId === "whitelist_apply") {
+        await handleWhitelistButton(interaction);
+      } else if (
+        interaction.customId.startsWith("confirm_whitelist_") ||
+        interaction.customId === "cancel_whitelist"
+      ) {
+        await handleConfirmationButtons(interaction);
+      }
     } else if (
       interaction.isModalSubmit() &&
       interaction.customId === "steamid_modal"
@@ -410,7 +715,14 @@ async function handleInteraction(interaction, client) {
 module.exports = {
   handleReady,
   handleInteraction,
-  handleManualWhitelist,
-  handleManualReject,
+  handleSlashCommands,
+  handleConfirmationButtons,
+  handleSlashWhitelist,
+  handleSlashReject,
+  processWhitelist,
+  processRejection,
+  cleanupExistingWhitelistData,
   sendWelcomeMessage,
+  handleWhitelistButton,
+  handleSteamIdModal,
 };

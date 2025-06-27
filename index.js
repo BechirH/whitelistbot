@@ -1,12 +1,7 @@
 const { Client, GatewayIntentBits } = require("discord.js");
 const { CONFIG, validateConfig } = require("./config");
 const { loadDatabase } = require("./database");
-const {
-  handleReady,
-  handleInteraction,
-  handleManualWhitelist,
-  handleManualReject,
-} = require("./handlers");
+const { handleReady, handleInteraction } = require("./handlers");
 
 // Validate configuration on startup
 try {
@@ -33,42 +28,13 @@ loadDatabase();
 // Bot ready event
 client.once("ready", () => handleReady(client));
 
-// Handle interactions
+// Handle all interactions (slash commands, buttons, modals)
 client.on("interactionCreate", (interaction) =>
   handleInteraction(interaction, client)
 );
 
-// Handle admin commands
-client.on("messageCreate", async (message) => {
-  // Ignore messages from bots
-  if (message.author.bot) return;
-
-  // Check if message starts with command prefix
-  if (!message.content.startsWith("!")) return;
-
-  // Check if user has administrator permissions or admin role
-  const hasAdminPerms = message.member.permissions.has("Administrator");
-  const hasAdminRole = CONFIG.ADMIN_ROLE_ID
-    ? message.member.roles.cache.has(CONFIG.ADMIN_ROLE_ID)
-    : false;
-
-  if (!hasAdminPerms && !hasAdminRole) return;
-
-  const args = message.content.slice(1).trim().split(/ +/);
-  const command = args.shift().toLowerCase();
-
-  switch (command) {
-    case "whitelist":
-      await handleManualWhitelist(message, args);
-      break;
-    case "reject":
-      await handleManualReject(message, args);
-      break;
-    default:
-      // Ignore other commands
-      break;
-  }
-});
+// Remove the old messageCreate event handler since we're using slash commands now
+// The old !whitelist and !reject commands are replaced by /whitelist and /reject
 
 // Error handling
 client.on("error", (error) => {
