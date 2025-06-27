@@ -30,6 +30,23 @@ function hasRejectedRole(member) {
 }
 
 /**
+ * Check if user has admin permission (Administrator permission OR any of the configured admin roles)
+ * @param {GuildMember} member - Discord guild member
+ * @returns {boolean}
+ */
+function hasAdminPermission(member) {
+  // Check if user has Administrator permission
+  const hasAdminPerms = member.permissions?.has("Administrator");
+
+  // Check if user has any of the configured admin roles
+  const hasAdminRole =
+    CONFIG.ADMIN_ROLE_IDS.length > 0 &&
+    CONFIG.ADMIN_ROLE_IDS.some((roleId) => member.roles.cache.has(roleId));
+
+  return hasAdminPerms || hasAdminRole;
+}
+
+/**
  * Get user's role status
  * @param {GuildMember} member - Discord guild member
  * @returns {string} - 'whitelisted', 'rejected', or 'none'
@@ -89,6 +106,7 @@ module.exports = {
   isValidSteamID64,
   hasWhitelistedRole,
   hasRejectedRole,
+  hasAdminPermission,
   getUserRoleStatus,
   sendWhitelistCommands,
   clearBotMessages,

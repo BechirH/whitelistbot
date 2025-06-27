@@ -13,6 +13,7 @@ const {
   getUserRoleStatus,
   sendWhitelistCommands,
   clearBotMessages,
+  hasAdminPermission,
 } = require("./utils");
 const {
   isSteamIdWhitelisted,
@@ -193,13 +194,8 @@ async function handleSteamIdModal(interaction, client) {
       });
     }
 
-    // Check if Steam ID is already whitelisted by another user
-    if (isSteamIdWhitelisted(steamid)) {
-      return await interaction.reply({
-        embeds: [createDuplicateSteamIdEmbed()],
-        ephemeral: true,
-      });
-    }
+    // REMOVED: Steam ID duplication check - now allowing shared Steam IDs
+    // Multiple users can now share the same Steam ID
 
     // Add to whitelist database
     addToWhitelist(userId, steamid);
@@ -244,7 +240,7 @@ async function handleSteamIdModal(interaction, client) {
 }
 
 /**
- * Clean up existing whitelist data for user/steam ID
+ * Clean up existing whitelist data for user (but allow shared Steam IDs)
  * @param {string} discordId - Discord user ID
  * @param {string} steamId - Steam ID
  */
@@ -256,33 +252,16 @@ async function cleanupExistingWhitelistData(discordId, steamId) {
   if (!whitelistDB.steamids) whitelistDB.steamids = [];
   if (!whitelistDB.whitelistedUsers) whitelistDB.whitelistedUsers = [];
 
-  // Remove any existing user with this Steam ID
-  const existingUserWithSteamId = Object.keys(whitelistDB.users).find(
-    (uid) => whitelistDB.users[uid] === steamId
-  );
-
-  if (existingUserWithSteamId && existingUserWithSteamId !== discordId) {
-    delete whitelistDB.users[existingUserWithSteamId];
-
-    // Remove from whitelisted users list
-    const whitelistIndex = whitelistDB.whitelistedUsers.indexOf(
-      existingUserWithSteamId
-    );
-    if (whitelistIndex > -1) {
-      whitelistDB.whitelistedUsers.splice(whitelistIndex, 1);
-    }
-  }
-
-  // Remove any existing Steam ID for this user
+  // Only remove the user's previous Steam ID if they had a different one
   const existingSteamId = whitelistDB.users[discordId];
   if (existingSteamId && existingSteamId !== steamId) {
-    // Check if any other user has this Steam ID
-    const otherUserWithSteamId = Object.keys(whitelistDB.users).find(
+    // Check if any other user has this old Steam ID
+    const otherUserWithOldSteamId = Object.keys(whitelistDB.users).find(
       (uid) => uid !== discordId && whitelistDB.users[uid] === existingSteamId
     );
 
-    // If no other user has this Steam ID, remove it from steamids array
-    if (!otherUserWithSteamId) {
+    // If no other user has this old Steam ID, remove it from steamids array
+    if (!otherUserWithOldSteamId) {
       const steamIdIndex = whitelistDB.steamids.indexOf(existingSteamId);
       if (steamIdIndex > -1) {
         whitelistDB.steamids.splice(steamIdIndex, 1);
@@ -295,14 +274,14 @@ async function cleanupExistingWhitelistData(discordId, steamId) {
 }
 
 /**
- * Process whitelist operation - Optimized for large servers
+ * Process whitelist operation - Now allows shared Steam IDs
  * @param {Interaction} interaction - Discord interaction
  * @param {string} discordId - Discord user ID
  * @param {string} steamId - Steam ID
  */
 async function processWhitelist(interaction, discordId, steamId) {
   try {
-    // Remove any existing entries for this user or steam ID
+    // Clean up only the user's previous data (but allow shared Steam IDs)
     await cleanupExistingWhitelistData(discordId, steamId);
 
     // Add to whitelist database
@@ -436,7 +415,7 @@ async function processRejection(interaction, discordId, steamId) {
 }
 
 /**
- * Handle slash command for manual whitelist with duplicate checking
+ * Handle slash command for manual whitelist - Now allows shared Steam IDs
  * @param {ChatInputCommandInteraction} interaction - Discord slash command interaction
  */
 async function handleSlashWhitelist(interaction) {
@@ -454,31 +433,11 @@ async function handleSlashWhitelist(interaction) {
       });
     }
 
-    // Check for duplicates
-    const db = require("./database");
-    const whitelistDB = db.whitelistDB || {};
-
-    const existingUserWithSteamId = Object.keys(whitelistDB.users || {}).find(
-      (uid) => whitelistDB.users[uid] === steamId
-    );
-
+    // Check only for user already having a different Steam ID
     const existingSteamIdForUser = getUserSteamId(discordId);
 
-    let duplicateMessage = "";
-    let hasDuplicates = false;
-
-    if (existingUserWithSteamId && existingUserWithSteamId !== discordId) {
-      duplicateMessage += `⚠️ Steam ID ${steamId} is already whitelisted with user <@${existingUserWithSteamId}>\n`;
-      hasDuplicates = true;
-    }
-
     if (existingSteamIdForUser && existingSteamIdForUser !== steamId) {
-      duplicateMessage += `⚠️ User <@${discordId}> is already whitelisted with Steam ID ${existingSteamIdForUser}\n`;
-      hasDuplicates = true;
-    }
-
-    if (hasDuplicates) {
-      // Create confirmation buttons
+      // Create confirmation buttons for overwriting user's existing Steam ID
       const confirmButton = new ButtonBuilder()
         .setCustomId(`confirm_whitelist_${discordId}_${steamId}`)
         .setLabel("Overwrite")
@@ -495,9 +454,11 @@ async function handleSlashWhitelist(interaction) {
         cancelButton
       );
 
-      const duplicateEmbed = createAdminErrorEmbed(
-        `${duplicateMessage}\nDo you want to overwrite the existing data?`
-      ).setTitle("⚠️ Duplicate Found");
+      const duplicateMessage = `⚠️ User <@${discordId}> is already whitelisted with Steam ID ${existingSteamIdForUser}\n\nDo you want to overwrite with the new Steam ID ${steamId}?`;
+
+      const duplicateEmbed = createAdminErrorEmbed(duplicateMessage).setTitle(
+        "⚠️ User Already Has Different Steam ID"
+      );
 
       return await interaction.reply({
         embeds: [duplicateEmbed],
@@ -506,7 +467,7 @@ async function handleSlashWhitelist(interaction) {
       });
     }
 
-    // No duplicates, proceed with whitelisting
+    // No conflicts, proceed with whitelisting
     await processWhitelist(interaction, discordId, steamId);
   } catch (error) {
     console.error("❌ Error handling slash whitelist:", error);
@@ -555,21 +516,35 @@ async function handleSlashReject(interaction) {
     let targetDiscordId = discordId;
     let targetSteamId = steamId;
 
-    // If only Steam ID provided, find the Discord ID
+    // If only Steam ID provided, find the Discord ID(s) - now multiple users can have same Steam ID
     if (!discordId && steamId) {
       const db = require("./database");
       const whitelistDB = db.whitelistDB || {};
 
-      targetDiscordId = Object.keys(whitelistDB.users || {}).find(
+      const usersWithSteamId = Object.keys(whitelistDB.users || {}).filter(
         (uid) => whitelistDB.users[uid] === steamId
       );
 
-      if (!targetDiscordId) {
+      if (usersWithSteamId.length === 0) {
         return await interaction.reply({
           embeds: [createAdminErrorEmbed("No user found with that Steam ID.")],
           ephemeral: true,
         });
       }
+
+      if (usersWithSteamId.length > 1) {
+        const userList = usersWithSteamId.map((uid) => `<@${uid}>`).join(", ");
+        return await interaction.reply({
+          embeds: [
+            createAdminErrorEmbed(
+              `Multiple users found with Steam ID ${steamId}: ${userList}\n\nPlease specify the Discord ID to reject a specific user.`
+            ),
+          ],
+          ephemeral: true,
+        });
+      }
+
+      targetDiscordId = usersWithSteamId[0];
     }
 
     // If only Discord ID provided, get the Steam ID
@@ -629,13 +604,8 @@ async function handleConfirmationButtons(interaction) {
  * @param {ChatInputCommandInteraction} interaction - Discord slash command interaction
  */
 async function handleSlashCommands(interaction) {
-  // Check permissions
-  const hasAdminPerms = interaction.memberPermissions?.has("Administrator");
-  const hasAdminRole = CONFIG.ADMIN_ROLE_ID
-    ? interaction.member.roles.cache.has(CONFIG.ADMIN_ROLE_ID)
-    : false;
-
-  if (!hasAdminPerms && !hasAdminRole) {
+  // Check permissions using the new utility function
+  if (!hasAdminPermission(interaction.member)) {
     return await interaction.reply({
       embeds: [
         createAdminErrorEmbed("You don't have permission to use this command."),

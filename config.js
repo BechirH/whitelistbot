@@ -11,7 +11,8 @@ const CONFIG = {
   // Role IDs
   WHITELISTED_ROLE_ID: process.env.WHITELISTED_ROLE_ID,
   REJECTED_ROLE_ID: process.env.REJECTED_ROLE_ID,
-  ADMIN_ROLE_ID: process.env.ADMIN_ROLE_ID, // Optional: specific admin role for commands
+  // Support multiple admin roles - comma-separated list
+  ADMIN_ROLE_IDS: process.env.ADMIN_ROLE_IDS?.split(",") || [],
 
   // Database settings
   DB_FILE: process.env.DB_FILE || "whitelist_db.json",
@@ -37,6 +38,17 @@ function validateConfig() {
 
   if (CONFIG.COMMAND_CHANNELS.length === 0) {
     throw new Error("COMMAND_CHANNELS must contain at least one channel ID");
+  }
+
+  // Log admin roles configuration
+  if (CONFIG.ADMIN_ROLE_IDS.length > 0) {
+    console.log(
+      `✅ Admin roles configured: ${CONFIG.ADMIN_ROLE_IDS.length} roles`
+    );
+  } else {
+    console.log(
+      "⚠️ No admin roles configured - only users with Administrator permission can use commands"
+    );
   }
 }
 
