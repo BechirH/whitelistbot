@@ -34,6 +34,23 @@ const commands = [
         .setRequired(false)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("find")
+    .setDescription("Find user information by Discord ID or Steam ID")
+    .addStringOption((option) =>
+      option
+        .setName("discord_id")
+        .setDescription("Discord User ID to search for")
+        .setRequired(false)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("steam_id")
+        .setDescription("Steam ID 64 to search for")
+        .setRequired(false)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ];
 
 /**

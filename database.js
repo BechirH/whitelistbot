@@ -178,6 +178,127 @@ function getDatabaseStats() {
   };
 }
 
+/**
+ * Find user by Discord ID
+ * @param {string} discordId - Discord user ID
+ * @returns {Object|null} User information object or null if not found
+ */
+function findUserByDiscordId(discordId) {
+  const steamId = whitelistDB.users[discordId];
+
+  if (!steamId) {
+    // Check if user is in rejected list only
+    if (whitelistDB.rejectedUsers.includes(discordId)) {
+      return {
+        found: true,
+        users: [
+          {
+            discordId: discordId,
+            steamId: null,
+            status: "❌ Rejected",
+          },
+        ],
+      };
+    }
+    return { found: false };
+  }
+
+  // Get user status
+  let status = "⚪ Unknown";
+  if (whitelistDB.whitelistedUsers.includes(discordId)) {
+    status = "✅ Whitelisted";
+  } else if (whitelistDB.rejectedUsers.includes(discordId)) {
+    status = "❌ Rejected";
+  }
+
+  // Find other users with same Steam ID
+  const usersWithSameSteamId = Object.keys(whitelistDB.users).filter(
+    (uid) => uid !== discordId && whitelistDB.users[uid] === steamId
+  );
+
+  return {
+    found: true,
+    users: [
+      {
+        discordId: discordId,
+        steamId: steamId,
+        status: status,
+      },
+    ],
+    additionalSteamUsers:
+      usersWithSameSteamId.length > 0 ? usersWithSameSteamId : null,
+  };
+}
+
+/**
+ * Find users by Steam ID
+ * @param {string} steamId - Steam ID to search for
+ * @returns {Object|null} User information object or null if not found
+ */
+function findUsersBySteamId(steamId) {
+  // Find all users with this Steam ID
+  const usersWithSteamId = Object.keys(whitelistDB.users).filter(
+    (uid) => whitelistDB.users[uid] === steamId
+  );
+
+  if (usersWithSteamId.length === 0) {
+    return { found: false };
+  }
+
+  const users = usersWithSteamId.map((uid) => {
+    let status = "⚪ Unknown";
+    if (whitelistDB.whitelistedUsers.includes(uid)) {
+      status = "✅ Whitelisted";
+    } else if (whitelistDB.rejectedUsers.includes(uid)) {
+      status = "❌ Rejected";
+    }
+
+    return {
+      discordId: uid,
+      steamId: steamId,
+      status: status,
+    };
+  });
+
+  return {
+    found: true,
+    users: users,
+    multiple: users.length > 1,
+  };
+}
+
+/**
+ * Comprehensive user search function
+ * @param {string} discordId - Discord user ID (optional)
+ * @param {string} steamId - Steam ID (optional)
+ * @returns {Object} Search results
+ */
+function findUser(discordId = null, steamId = null) {
+  if (discordId && steamId) {
+    // Both provided - verify they match
+    const userSteamId = getUserSteamId(discordId);
+    if (userSteamId === steamId) {
+      return findUserByDiscordId(discordId);
+    } else {
+      return {
+        found: false,
+        error: "Discord ID and Steam ID do not match in database",
+      };
+    }
+  } else if (discordId) {
+    // Only Discord ID provided
+    return findUserByDiscordId(discordId);
+  } else if (steamId) {
+    // Only Steam ID provided
+    return findUsersBySteamId(steamId);
+  } else {
+    return {
+      found: false,
+      error: "No search parameters provided",
+    };
+  }
+}
+
 module.exports = {
   loadDatabase,
   saveDatabase,
@@ -190,4 +311,7 @@ module.exports = {
   addToRejected,
   getUserSteamId,
   getDatabaseStats,
+  findUserByDiscordId,
+  findUsersBySteamId,
+  findUser,
 };

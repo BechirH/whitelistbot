@@ -161,6 +161,105 @@ function createAdminErrorEmbed(message) {
     .setColor("#ff0000");
 }
 
+/**
+ * Create embed for find command results
+ * @param {Object} userInfo - User information object
+ * @param {string} searchType - Type of search performed ('discord_id' or 'steam_id')
+ * @param {string} searchValue - Value that was searched for
+ * @returns {EmbedBuilder}
+ */
+function createFindResultEmbed(userInfo, searchType, searchValue) {
+  const embed = new EmbedBuilder()
+    .setTitle("🔍 User Search Results")
+    .setColor("#0099ff")
+    .setTimestamp();
+
+  if (userInfo.found) {
+    let description = `Search results for ${
+      searchType === "discord_id" ? "Discord ID" : "Steam ID"
+    }: **${searchValue}**`;
+
+    if (userInfo.multiple) {
+      description += `\n\n⚠️ **Multiple users found with this Steam ID:**`;
+    }
+
+    embed.setDescription(description);
+
+    if (userInfo.users && userInfo.users.length > 1) {
+      // Multiple users with same Steam ID
+      let usersList = "";
+      userInfo.users.forEach((user, index) => {
+        usersList += `**User ${index + 1}:**\n`;
+        usersList += `• Discord ID: \`${user.discordId}\`\n`;
+        usersList += `• Discord User: <@${user.discordId}>\n`;
+        usersList += `• Steam ID: \`${user.steamId}\`\n`;
+        usersList += `• Status: ${user.status}\n`;
+        if (index < userInfo.users.length - 1) usersList += "\n";
+      });
+
+      embed.addFields({
+        name: "👥 Found Users",
+        value: usersList,
+        inline: false,
+      });
+    } else {
+      // Single user
+      const user = userInfo.users[0];
+      embed.addFields(
+        { name: "Discord ID", value: `\`${user.discordId}\``, inline: true },
+        { name: "Discord User", value: `<@${user.discordId}>`, inline: true },
+        { name: "Steam ID", value: `\`${user.steamId}\``, inline: true },
+        { name: "Status", value: user.status, inline: true },
+        { name: "In Database Since", value: "Data available", inline: true }
+      );
+    }
+
+    // Add additional info if available
+    if (
+      userInfo.additionalSteamUsers &&
+      userInfo.additionalSteamUsers.length > 0
+    ) {
+      const otherUsers = userInfo.additionalSteamUsers
+        .map((uid) => `<@${uid}>`)
+        .join(", ");
+      embed.addFields({
+        name: "⚠️ Other users with same Steam ID",
+        value: otherUsers,
+        inline: false,
+      });
+    }
+  } else {
+    embed
+      .setDescription(
+        `No user found for ${
+          searchType === "discord_id" ? "Discord ID" : "Steam ID"
+        }: **${searchValue}**`
+      )
+      .setColor("#ff9900");
+  }
+
+  return embed;
+}
+
+/**
+ * Create embed for find command parameter error
+ * @returns {EmbedBuilder}
+ */
+function createFindParameterErrorEmbed() {
+  return new EmbedBuilder()
+    .setTitle("❌ Missing Parameters")
+    .setDescription(
+      "You must provide either a Discord ID or Steam ID to search for."
+    )
+    .addFields({
+      name: "Usage Examples",
+      value:
+        "• `/find discord_id:123456789012345678`\n• `/find steam_id:76561198000000000`\n• `/find discord_id:123456789012345678 steam_id:76561198000000000`",
+      inline: false,
+    })
+    .setColor("#ff0000");
+}
+
 module.exports = {
   createWelcomeEmbed,
   createAlreadyWhitelistedEmbed,
@@ -172,4 +271,6 @@ module.exports = {
   createErrorEmbed,
   createAdminSuccessEmbed,
   createAdminErrorEmbed,
+  createFindResultEmbed,
+  createFindParameterErrorEmbed,
 };
