@@ -23,6 +23,7 @@ const {
   addToWhitelist,
   addToRejected,
   getUserSteamId,
+  findUser,
 } = require("./database");
 const {
   createWelcomeEmbed,
@@ -35,6 +36,8 @@ const {
   createErrorEmbed,
   createAdminSuccessEmbed,
   createAdminErrorEmbed,
+  createFindResultEmbed,
+  createFindParameterErrorEmbed,
 } = require("./embeds");
 
 /**
@@ -351,7 +354,7 @@ async function processWhitelist(interaction, discordId, steamId) {
     } else {
       await interaction.reply({
         embeds: [successEmbed],
-        ephemeral: true,
+        ephemeral: false, // Changed to false
       });
     }
 
@@ -372,7 +375,7 @@ async function processWhitelist(interaction, discordId, steamId) {
     if (interaction.replied || interaction.deferred) {
       await interaction.editReply(errorResponse);
     } else {
-      await interaction.reply({ ...errorResponse, ephemeral: true });
+      await interaction.reply({ ...errorResponse, ephemeral: false }); // Changed to false
     }
   }
 }
@@ -418,7 +421,7 @@ async function processRejection(interaction, discordId, steamId) {
 
     await interaction.reply({
       embeds: [successEmbed],
-      ephemeral: true,
+      ephemeral: false, // Changed to false
     });
 
     console.log(
@@ -434,7 +437,7 @@ async function processRejection(interaction, discordId, steamId) {
           "An error occurred while processing the rejection."
         ),
       ],
-      ephemeral: true,
+      ephemeral: false, // Changed to false
     });
   }
 }
@@ -454,7 +457,7 @@ async function handleSlashWhitelist(interaction) {
         embeds: [
           createAdminErrorEmbed("Invalid Steam ID format. Must be 17 digits."),
         ],
-        ephemeral: true,
+        ephemeral: false, // Changed to false
       });
     }
 
@@ -488,7 +491,7 @@ async function handleSlashWhitelist(interaction) {
       return await interaction.reply({
         embeds: [duplicateEmbed],
         components: [row],
-        ephemeral: true,
+        ephemeral: false, // Changed to false
       });
     }
 
@@ -502,7 +505,7 @@ async function handleSlashWhitelist(interaction) {
           "An error occurred while processing the whitelist."
         ),
       ],
-      ephemeral: true,
+      ephemeral: false, // Changed to false
     });
   }
 }
@@ -524,7 +527,7 @@ async function handleSlashReject(interaction) {
             "You must provide either Discord ID or Steam ID (or both)."
           ),
         ],
-        ephemeral: true,
+        ephemeral: false, // Changed to false
       });
     }
 
@@ -534,7 +537,7 @@ async function handleSlashReject(interaction) {
         embeds: [
           createAdminErrorEmbed("Invalid Steam ID format. Must be 17 digits."),
         ],
-        ephemeral: true,
+        ephemeral: false, // Changed to false
       });
     }
 
@@ -553,7 +556,7 @@ async function handleSlashReject(interaction) {
       if (usersWithSteamId.length === 0) {
         return await interaction.reply({
           embeds: [createAdminErrorEmbed("No user found with that Steam ID.")],
-          ephemeral: true,
+          ephemeral: false, // Changed to false
         });
       }
 
@@ -565,7 +568,7 @@ async function handleSlashReject(interaction) {
               `Multiple users found with Steam ID ${steamId}: ${userList}\n\nPlease specify the Discord ID to reject a specific user.`
             ),
           ],
-          ephemeral: true,
+          ephemeral: false, // Changed to false
         });
       }
 
@@ -581,7 +584,7 @@ async function handleSlashReject(interaction) {
     if (isUserInRejectedList(targetDiscordId)) {
       return await interaction.reply({
         embeds: [createAdminErrorEmbed("User is already rejected.")],
-        ephemeral: true,
+        ephemeral: false, // Changed to false
       });
     }
 
@@ -595,7 +598,88 @@ async function handleSlashReject(interaction) {
           "An error occurred while processing the rejection."
         ),
       ],
-      ephemeral: true,
+      ephemeral: false, // Changed to false
+    });
+  }
+}
+
+/**
+ * Handle slash command for finding users
+ * @param {ChatInputCommandInteraction} interaction - Discord slash command interaction
+ */
+async function handleSlashFind(interaction) {
+  try {
+    const discordId = interaction.options.getString("discord_id");
+    const steamId = interaction.options.getString("steam_id");
+
+    // Validate that at least one parameter is provided
+    if (!discordId && !steamId) {
+      return await interaction.reply({
+        embeds: [createFindParameterErrorEmbed()],
+        ephemeral: false, // Changed to false
+      });
+    }
+
+    // Validate Steam ID if provided
+    if (steamId && !isValidSteamID64(steamId)) {
+      return await interaction.reply({
+        embeds: [
+          createAdminErrorEmbed("Invalid Steam ID format. Must be 17 digits."),
+        ],
+        ephemeral: false, // Changed to false
+      });
+    }
+
+    // Search for user(s)
+    const searchResult = findUser(discordId, steamId);
+
+    // Determine search type and value for embed
+    let searchType = "";
+    let searchValue = "";
+
+    if (discordId && steamId) {
+      searchType = "discord_id";
+      searchValue = discordId;
+    } else if (discordId) {
+      searchType = "discord_id";
+      searchValue = discordId;
+    } else if (steamId) {
+      searchType = "steam_id";
+      searchValue = steamId;
+    }
+
+    // Handle search result error
+    if (searchResult.error) {
+      return await interaction.reply({
+        embeds: [createAdminErrorEmbed(searchResult.error)],
+        ephemeral: false, // Changed to false
+      });
+    }
+
+    // Create and send result embed
+    const resultEmbed = createFindResultEmbed(
+      searchResult,
+      searchType,
+      searchValue
+    );
+
+    await interaction.reply({
+      embeds: [resultEmbed],
+      ephemeral: false, // Changed to false
+    });
+
+    console.log(
+      `🔍 Find command used by ${interaction.user.tag}: ${searchType}=${searchValue}, found=${searchResult.found}`
+    );
+  } catch (error) {
+    console.error("❌ Error handling slash find:", error);
+    await interaction.reply({
+      embeds: [
+        createAdminErrorEmbed(
+          "An error occurred while searching for the user."
+        ),
+      ],
+      ephemeral: false, // Changed to false
     });
   }
 }
@@ -635,7 +719,7 @@ async function handleSlashCommands(interaction) {
       embeds: [
         createAdminErrorEmbed("You don't have permission to use this command."),
       ],
-      ephemeral: true,
+      ephemeral: true, // Keep permission errors ephemeral
     });
   }
 
@@ -647,10 +731,13 @@ async function handleSlashCommands(interaction) {
       case "reject":
         await handleSlashReject(interaction);
         break;
+      case "find":
+        await handleSlashFind(interaction);
+        break;
       default:
         await interaction.reply({
           embeds: [createAdminErrorEmbed("Unknown command.")],
-          ephemeral: true,
+          ephemeral: false, // Changed to false
         });
     }
   } catch (error) {
@@ -661,7 +748,7 @@ async function handleSlashCommands(interaction) {
           "An error occurred while processing the command."
         ),
       ],
-      ephemeral: true,
+      ephemeral: false, // Changed to false
     };
 
     if (interaction.replied || interaction.deferred) {
@@ -714,6 +801,7 @@ module.exports = {
   handleConfirmationButtons,
   handleSlashWhitelist,
   handleSlashReject,
+  handleSlashFind,
   processWhitelist,
   processRejection,
   cleanupExistingWhitelistData,
