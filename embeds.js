@@ -6,9 +6,14 @@ const { EmbedBuilder } = require("discord.js");
  */
 function createWelcomeEmbed() {
   return new EmbedBuilder()
-    .setTitle("🎮 Whitelist Application")
-    .setDescription("Click the button below to apply for whitelist access.")
-    .setColor("#00ff00")
+    .setTitle("Get access to join our server!")
+    .setDescription(
+      "\n**• Click the button below & enter Your SteamID 64\nto apply for whitelist access!**\n\n<:spoke_info:1123418760993312799> [**Steam ID tutoriel **](https://www.youtube.com/watch?v=Vp4tfpNyzI4) **Or** <:spoke_info:1385973465777045574>  [**Steam ID Finder**](https://steamid.xyz) "
+    )
+    .setColor("#ffffff")
+    .setImage(
+      "https://cdn.discordapp.com/attachments/1290548822350757899/1385962271917998090/whitelist.gif?ex=685fe273&is=685e90f3&hm=188d73ad222faf96fe2bbdca5e626b7167f100643a3901aacabb020d69c125c0&"
+    )
     .setTimestamp();
 }
 
