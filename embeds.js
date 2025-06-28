@@ -209,8 +209,7 @@ function createFindResultEmbed(userInfo, searchType, searchValue) {
         { name: "Discord ID", value: `\`${user.discordId}\``, inline: true },
         { name: "Discord User", value: `<@${user.discordId}>`, inline: true },
         { name: "Steam ID", value: `\`${user.steamId}\``, inline: true },
-        { name: "Status", value: user.status, inline: true },
-        { name: "In Database Since", value: "Data available", inline: true }
+        { name: "Status", value: user.status, inline: true }
       );
     }
 

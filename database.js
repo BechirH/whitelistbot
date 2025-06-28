@@ -302,7 +302,6 @@ function findUser(discordId = null, steamId = null) {
 module.exports = {
   loadDatabase,
   saveDatabase,
-  initializeDatabaseFromServer,
   isSteamIdWhitelisted,
   isUserWhitelisted,
   isUserInWhitelistedList,
