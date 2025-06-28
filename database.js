@@ -62,60 +62,6 @@ function saveDatabase() {
 }
 
 /**
- * Initialize database with existing users from server
- * @param {Guild} guild - Discord guild
- */
-async function initializeDatabaseFromServer(guild) {
-  try {
-    console.log("🔄 Initializing database from server roles...");
-
-    // Get the roles directly from cache (much faster)
-    const whitelistedRole = guild.roles.cache.get(CONFIG.WHITELISTED_ROLE_ID);
-    const rejectedRole = guild.roles.cache.get(CONFIG.REJECTED_ROLE_ID);
-
-    let whitelistedCount = 0;
-    let rejectedCount = 0;
-
-    // Process whitelisted role members
-    if (whitelistedRole) {
-      // Role.members gives us members with that role without fetching all guild members
-      whitelistedRole.members.forEach((member) => {
-        if (!whitelistDB.whitelistedUsers.includes(member.id)) {
-          whitelistDB.whitelistedUsers.push(member.id);
-          whitelistedCount++;
-        }
-      });
-    } else {
-      console.warn(
-        `⚠️ Whitelisted role (ID: ${CONFIG.WHITELISTED_ROLE_ID}) not found`
-      );
-    }
-
-    // Process rejected role members
-    if (rejectedRole) {
-      rejectedRole.members.forEach((member) => {
-        if (!whitelistDB.rejectedUsers.includes(member.id)) {
-          whitelistDB.rejectedUsers.push(member.id);
-          rejectedCount++;
-        }
-      });
-    } else {
-      console.warn(
-        `⚠️ Rejected role (ID: ${CONFIG.REJECTED_ROLE_ID}) not found`
-      );
-    }
-
-    saveDatabase();
-
-    console.log(
-      `✅ Database initialized: ${whitelistedCount} whitelisted, ${rejectedCount} rejected users added`
-    );
-  } catch (error) {
-    console.error("❌ Error initializing database from server:", error);
-  }
-}
-
-/**
  * Check if Steam ID is already whitelisted
  * @param {string} steamid - Steam ID to check
  * @returns {boolean}

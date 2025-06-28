@@ -23,7 +23,6 @@ const {
   addToWhitelist,
   addToRejected,
   getUserSteamId,
-  initializeDatabaseFromServer,
 } = require("./database");
 const {
   createWelcomeEmbed,
@@ -71,11 +70,6 @@ async function handleReady(client) {
     const { registerCommands } = require("./commands");
     const guild = client.guilds.cache.first();
     await registerCommands(client.user.id, guild?.id);
-
-    // Initialize database from server roles
-    if (guild) {
-      await initializeDatabaseFromServer(guild);
-    }
 
     const welcomeChannel = await client.channels.fetch(
       CONFIG.WELCOME_CHANNEL_ID
